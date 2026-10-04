@@ -67,13 +67,14 @@ function getProviderNames() {
 
 function normalizeConfig(base) {
   const cfg = { ...base };
-  // Marker: if user explicitly provided an empty array for tmdbApiKeys in override file we should not resurrect legacy key
-  const explicitEmptyKeys = Array.isArray(cfg.tmdbApiKeys) && cfg.tmdbApiKeys.length === 0 && Object.prototype.hasOwnProperty.call(base,'tmdbApiKeys');
   if (!cfg.configVersion) cfg.configVersion = CONFIG_SCHEMA_VERSION;
   // Derive structured views
   cfg.minQualities = parseJsonMaybe(cfg.minQualitiesRaw) || (cfg.minQualitiesRaw ? { default: cfg.minQualitiesRaw } : null);
   cfg.excludeCodecs = parseJsonMaybe(cfg.excludeCodecsRaw) || null;
   cfg.febboxCookies = Array.isArray(cfg.febboxCookies) ? cfg.febboxCookies : parseCookies(cfg.febboxCookies);
+  if ((!cfg.febboxCookies || !cfg.febboxCookies.length) && process.env.FEBBOX_COOKIES) {
+    cfg.febboxCookies = parseCookies(process.env.FEBBOX_COOKIES);
+  }
   // TMDB multi-key support: allow tmdbApiKeys (array) or legacy single tmdbApiKey
   if (cfg.tmdbApiKeys && !Array.isArray(cfg.tmdbApiKeys)) {
     if (typeof cfg.tmdbApiKeys === 'string') {
@@ -82,12 +83,13 @@ function normalizeConfig(base) {
     } else cfg.tmdbApiKeys = [];
   }
   if (!cfg.tmdbApiKeys || !cfg.tmdbApiKeys.length) {
-    if (!explicitEmptyKeys && cfg.tmdbApiKey) cfg.tmdbApiKeys = [cfg.tmdbApiKey];
-    else cfg.tmdbApiKeys = [];
-  }
-  // If user explicitly cleared tmdbApiKeys via override, also clear legacy single key so it is not shown
-  if (explicitEmptyKeys) {
-    cfg.tmdbApiKey = null;
+    if (cfg.tmdbApiKey) cfg.tmdbApiKeys = [cfg.tmdbApiKey];
+    else if (process.env.TMDB_API_KEY) cfg.tmdbApiKeys = [process.env.TMDB_API_KEY];
+    else if (process.env.TMDB_API_KEYS) {
+      const parsed = parseJsonMaybe(process.env.TMDB_API_KEYS);
+      if (Array.isArray(parsed) && parsed.length) cfg.tmdbApiKeys = parsed;
+      else cfg.tmdbApiKeys = [];
+    } else cfg.tmdbApiKeys = [];
   }
   // Ensure dedupe + trim
   cfg.tmdbApiKeys = Array.from(new Set(cfg.tmdbApiKeys.map(k=>String(k).trim()).filter(Boolean)));
@@ -124,12 +126,11 @@ function applyConfigToEnv(cfg){
   if (cfg.port) process.env.API_PORT = String(cfg.port);
   // Backward compat: set single TMDB_API_KEY env to first key if available
   if (cfg.tmdbApiKeys && cfg.tmdbApiKeys.length) process.env.TMDB_API_KEY = cfg.tmdbApiKeys[0];
-  else if (cfg.tmdbApiKey) process.env.TMDB_API_KEY = cfg.tmdbApiKey; else delete process.env.TMDB_API_KEY;
-  if (cfg.defaultProviders) process.env.DEFAULT_PROVIDERS = cfg.defaultProviders.join(',');
+  else if (cfg.tmdbApiKey) process.env.TMDB_API_KEY = cfg.tmdbApiKey;
+  if (cfg.defaultProviders && cfg.defaultProviders.length) process.env.DEFAULT_PROVIDERS = cfg.defaultProviders.join(',');
   if (cfg.minQualitiesRaw) process.env.MIN_QUALITIES = cfg.minQualitiesRaw; else delete process.env.MIN_QUALITIES;
   if (cfg.excludeCodecsRaw) process.env.EXCLUDE_CODECS = cfg.excludeCodecsRaw; else delete process.env.EXCLUDE_CODECS;
   if (cfg.febboxCookies && cfg.febboxCookies.length) process.env.FEBBOX_COOKIES = cfg.febboxCookies.join(',');
-  else delete process.env.FEBBOX_COOKIES;
   if (cfg.defaultRegion) process.env.DEFAULT_REGION = cfg.defaultRegion; else delete process.env.DEFAULT_REGION;
   
   // Dynamic provider enable flags
@@ -190,7 +191,14 @@ function loadConfig() {
   });
   
   const override = readOverrideFile();
-  const merged = { ...envCfg, ...override };
+  const filteredOverride = {};
+  for (const [k, v] of Object.entries(override)) {
+    if (v === null || v === undefined) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    filteredOverride[k] = v;
+  }
+  const merged = { ...envCfg, ...filteredOverride };
   const normalized = normalizeConfig(merged);
   applyConfigToEnv(normalized); // ensure providers see updated process.env values
   return normalized;

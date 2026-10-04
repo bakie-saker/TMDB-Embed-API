@@ -1,9 +1,7 @@
 {
   "defaultProviders": [],
   "configVersion": 1,
-  "tmdbApiKeys": [],
   "enableShowboxProvider": true,
-  "febboxCookies": [],
   "enable4khdhubProvider": true,
   "enableVixsrcProvider": true,
   "enableProxy": false,
